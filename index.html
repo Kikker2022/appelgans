@@ -1,45 +1,190 @@
-u<!DOCTYPE html>
+<!DOCTYPE html>
 <html>
 <head>
-  <title>Appelgans Multiplayer</title>
-supabase/supabase-js@2"></script>
+<meta charset="UTF-8">
+<title>Appelgans Multiplayer Complete</title>
+<style>
+body { font-family: Arial; text-align:center; }
+#board { display:grid; grid-template-columns: repeat(7,50px); gap:5px; justify-content:center; margin-top:20px; }
+.cell { width:50px; height:50px; border:1px solid black; display:flex; align-items:center; justify-content:center; position:relative; cursor:pointer; }
+.pion { width:20px; height:20px; border-radius:50%; position:absolute; bottom:2px; left:2px; }
+#scoreboard{ margin-top:15px; font-size:18px; }
+.popup{ position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:white; border:2px solid black; padding:15px; display:none; z-index:10;}
+.popup button{margin:5px;}
+.overlay{ position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); display:none; z-index:5;}
+</style>
 </head>
 <body>
 
-  <h1>🪿 Appelgans Multiplayer</h1>
-  <p id="status">Verbinden met database...</p>
+<h1>Appelgans Multiplayer Quiz</h1>
 
-  supabase/supabase-js@2"></script>
-  
-  <script>
-    const supabase = window.supabase.createClient(
-      "https://hpawswyeaiokxdvvqubq.supabase.co",
-      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhwYXdzd3llYWlva3hkdnZxdWJxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA5MjU1MzEsImV4cCI6MjA4NjUwMTUzMX0.659GkPtdi0eIDv9U_nGj9eUy3C_nYOfinfY-kNFW-io"
-    );
+<div>
+  <button id="startHost">Start nieuw spel (Host)</button>
+  <input id="joinCode" placeholder="Voer spelcode in">
+  <button id="joinGame">Join spel</button>
+</div>
 
-    async function test() {
-      try {
-        const { error } = await supabase
-          .from("test")
-          .select("*")
-          .limit(1);
+<!-- Rubriek keuze -->
+<div id="rubriekKeuze" style="margin-top:10px; display:none;">
+  Kies rubriek:
+  <select id="rubriekSelect">
+    <option value="Fryslan">Fryslân / Noord-Nederland</option>
+    <option value="Wereld">Wereldkennis</option>
+    <option value="Landmeetkunde">Landmeetkunde</option>
+    <option value="TopoVMBO">Topo VMBO (klas 1-3)</option>
+  </select>
+</div>
 
-        if (error) {
-          document.getElementById("status").innerText =
-            "❌ Supabase error: " + error.message;
-        } else {
-          document.getElementById("status").innerText =
-            "✅ Verbonden met Supabase!";
-        }
+<div id="board"></div>
+<div id="scoreboard"></div>
 
-      } catch (e) {
-        document.getElementById("status").innerText =
-          "🔥 JS fout: " + e.message;
-      }
-    }
+<div class="overlay" id="overlay"></div>
+<div class="popup" id="popup">
+  <div id="vraagTekst"></div>
+  <button id="antwoordA">Team A goed</button>
+  <button id="antwoordB">Team B goed</button>
+  <button id="antwoordC">Team C goed</button>
+  <button id="antwoordD">Team D goed</button>
+</div>
 
-    test();
-  </script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const SUPABASE_URL = "JE_SUPABASE_URL";
+const SUPABASE_KEY = "JE_SUPABASE_ANON_KEY";
+const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const board = document.getElementById("board");
+const scoreboard = document.getElementById("scoreboard");
+const popup = document.getElementById("popup");
+const overlay = document.getElementById("overlay");
+const rubriekKeuze = document.getElementById("rubriekKeuze");
+const rubriekSelect = document.getElementById("rubriekSelect");
+
+const teamButtons = {
+  "red": document.getElementById("antwoordA"),
+  "blue": document.getElementById("antwoordB"),
+  "green": document.getElementById("antwoordC"),
+  "yellow": document.getElementById("antwoordD")
+};
+
+let colors = ["red","blue","green","yellow"];
+let teamColor, gameCode, teamId;
+let geselecteerdeRubriek = "Fryslan";
+
+// Bonusvakjes
+const bonusVakjes = [5,10,20,30,40];
+
+// Voorbeeldvragen per rubriek
+const vragen = [
+  {vraag:"Wat is de hoofdstad van Nederland?", rubriek:"Fryslan"},
+  {vraag:"Hoeveel provincies heeft Nederland?", rubriek:"Fryslan"},
+  {vraag:"Wat is 5 x 8?", rubriek:"Wereld"},
+  {vraag:"In welk jaar eindigde de Tweede Wereldoorlog?", rubriek:"Wereld"},
+  {vraag:"Wat is een kadastrale kaart?", rubriek:"Landmeetkunde"},
+  {vraag:"Wat meet je met een theodoliet?", rubriek:"Landmeetkunde"},
+  {vraag:"Wat is de hoofdstad van Duitsland?", rubriek:"TopoVMBO"},
+  {vraag:"Noem drie rivieren in Nederland.", rubriek:"TopoVMBO"}
+  // Hier kan je uitbreiden tot 100+ vragen per rubriek
+];
+
+// Maak 42 vakjes
+for(let i=1;i<=42;i++){
+  let cell = document.createElement("div");
+  cell.className = "cell";
+  cell.id = "cell"+i;
+  cell.innerText = i;
+  board.appendChild(cell);
+
+  cell.onclick = async ()=>{
+    if(!gameCode) return;
+    // Kies willekeurige vraag uit geselecteerde rubriek
+    const vragenRubriek = vragen.filter(v=>v.rubriek===geselecteerdeRubriek);
+    let vraag = vragenRubriek[Math.floor(Math.random()*vragenRubriek.length)];
+    showPopup(vraag.vraag);
+    popup.dataset.team = teamId;
+    popup.dataset.cell = i;
+    popup.dataset.bonus = bonusVakjes.includes(i)?2:0;
+  }
+}
+
+// Popup tonen/verbergen
+function showPopup(vraag){
+  document.getElementById("vraagTekst").innerText = vraag;
+  popup.style.display="block";
+  overlay.style.display="block";
+}
+function hidePopup(){ popup.style.display="none"; overlay.style.display="none"; }
+
+// Rubriek keuze (host)
+rubriekSelect.onchange = ()=>{
+  geselecteerdeRubriek = rubriekSelect.value;
+}
+
+// Host start spel
+document.getElementById("startHost").onclick = async ()=>{
+  gameCode = Math.floor(1000 + Math.random()*9000);
+  alert("Spel gestart! Code: "+gameCode);
+  teamColor = colors[0];
+  teamId = "team0";
+  rubriekKeuze.style.display="block"; // host kan rubriek kiezen
+  await supabase.from("games").insert([{game:gameCode, team:teamId, kleur:teamColor, positie:1, score:0}]);
+  listenGame();
+}
+
+// Join spel
+document.getElementById("joinGame").onclick = async ()=>{
+  gameCode = parseInt(document.getElementById("joinCode").value);
+  const res = await supabase.from("games").select("*").eq("game",gameCode);
+  const existingTeams = res.data;
+  if(existingTeams.length>=4){ alert("Vol!"); return;}
+  teamColor = colors[existingTeams.length];
+  teamId = "team"+existingTeams.length;
+  await supabase.from("games").insert([{game:gameCode, team:teamId, kleur:teamColor, positie:1, score:0}]);
+  listenGame();
+}
+
+// Realtime listener
+function listenGame(){
+  supabase.from(`games:game=eq.${gameCode}`).on('UPDATE',payload=>{
+    const pos = payload.new.positie;
+    const kleur = payload.new.kleur;
+    const score = payload.new.score;
+    updatePion(kleur,pos);
+    updateScore();
+  }).subscribe();
+}
+
+// Pion verplaatsen
+function updatePion(color,pos){
+  document.querySelectorAll(".pion."+color).forEach(el=>el.remove());
+  const cell = document.getElementById("cell"+pos);
+  const pion = document.createElement("div");
+  pion.className="pion "+color;
+  pion.style.background=color;
+  cell.appendChild(pion);
+}
+
+// Score tonen
+async function updateScore(){
+  scoreboard.innerHTML="";
+  const res = await supabase.from("games").select("*").eq("game",gameCode);
+  res.data.forEach(t=>{
+    scoreboard.innerHTML += t.kleur + ": " + t.score + " | ";
+  });
+}
+
+// Team antwoordt goed
+for(let color of colors){
+  teamButtons[color].onclick = async ()=>{
+    let res = await supabase.from("games").select("*").eq("game",gameCode).eq("team",popup.dataset.team);
+    let newScore = res.data[0].score + 1;
+    let newPos = parseInt(popup.dataset.cell) + parseInt(popup.dataset.bonus || 0) + 1;
+    if(newPos>42) newPos=42;
+    await supabase.from("games").update({score:newScore, positie:newPos}).eq("game",gameCode).eq("team",popup.dataset.team);
+    hidePopup();
+  }
+}
+</script>
 
 </body>
 </html>
